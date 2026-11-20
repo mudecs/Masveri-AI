@@ -1,0 +1,16 @@
+{
+  "name": "Masveri AI — Maldives Fishing Forecast",
+  "short_name": "Masveri AI",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#f4f1e8",
+  "theme_color": "#0b3036",
+  "icons": [
+    {
+      "src": "icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

@@ -1,0 +1,28 @@
+kind = "web"
+previewPath = "/"
+title = "Masveri AI"
+description = "A bilingual English and Dhivehi fishing intelligence app for Maldives anglers, with modeled marine forecasts, fishing conditions, tide estimates, moon phases, and method-based advice."
+version = "1.0.0"
+id = "artifacts/masveri-ai"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 20858
+
+[services.development]
+run = "pnpm --filter @workspace/masveri-ai run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/masveri-ai", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/masveri-ai/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "20858"
+BASE_PATH = "/"
