@@ -12,6 +12,7 @@ type Row = {
   swell?: number; current: number | null; dir?: number; sea?: number;
 };
 type Place = [string, number, number];
+type CustomPoint = { lat: number; lon: number; name: string };
 
 const places: Place[] = [
   ['Malé offshore', 4.15, 73.46], ['Hulhumalé offshore', 4.25, 73.58],
@@ -170,12 +171,26 @@ function App() {
     return methods.some(([id]) => id === saved) ? saved : 'reef';
   });
   const [rows, setRows] = useState<Row[]>([]);
+  const [customPoint, setCustomPoint] = useState<CustomPoint | null>(() => {
+    try {
+      const raw = localStorage.getItem('customPoint');
+      if (!raw) return null;
+      const parsed: unknown = JSON.parse(raw);
+      if (typeof parsed !== 'object' || parsed === null) return null;
+      const p = parsed as Record<string, unknown>;
+      if (typeof p.lat !== 'number' || typeof p.lon !== 'number') return null;
+      const lat = p.lat, lon = p.lon;
+      if (!Number.isFinite(lat) || lat < -90 || lat > 90 || !Number.isFinite(lon) || lon < -180 || lon > 180) return null;
+      return { lat, lon, name: typeof p.name === 'string' && p.name ? p.name.slice(0, 60) : 'Map point' };
+    } catch { return null; }
+  });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [lastUpdate, setLastUpdate] = useState('');
   const t = copy[lang];
   const direction = lang === 'dv' ? 'rtl' : 'ltr';
   const place = places[placeIndex];
+  const forecastPlace: [string, number, number] = customPoint ? [customPoint.name, customPoint.lat, customPoint.lon] : place;
   const selectedMethod = methods.find(([id]) => id === method)?.[1] || methods[0][1];
   const todayMvt = new Date(Date.now() + 5 * 3600000).toISOString().slice(0, 16);
   const currentRow = rows.find(row => row.time >= todayMvt) || rows[0];
@@ -185,7 +200,7 @@ function App() {
   const load = useCallback(async () => {
     setLoading(true);
     setError('');
-    const [, lat, lon] = place;
+    const [, lat, lon] = forecastPlace;
     try {
       const common = `latitude=${lat}&longitude=${lon}&timezone=Indian%2FMaldives&forecast_days=7`;
       const weatherUrl = `https://api.open-meteo.com/v1/forecast?${common}&wind_speed_unit=kn&hourly=wind_speed_10m,wind_gusts_10m,precipitation,weather_code`;
@@ -215,7 +230,7 @@ function App() {
     } finally {
       setLoading(false);
     }
-  }, [place]);
+  }, [forecastPlace]);
   useEffect(() => { void load(); }, [load]);
   useEffect(() => {
     localStorage.setItem('lang', lang);
@@ -226,6 +241,11 @@ function App() {
   useEffect(() => { localStorage.setItem('method', method); }, [method]);
 
   const switchTab = (newTab: Tab) => setTab(newTab);
+  const applyCustomPoint = useCallback((point: { lat: number; lon: number }) => {
+    const next: CustomPoint = { lat: point.lat, lon: point.lon, name: `Map point · ${point.lat.toFixed(3)}, ${point.lon.toFixed(3)}` };
+    setCustomPoint(next);
+    try { localStorage.setItem('customPoint', JSON.stringify(next)); } catch { /* storage unavailable */ }
+  }, []);
   const pageTitle: Record<Tab, string> = {
     dashboard: t.home, map: t.marineMap, forecast: t.forecast, tides: t.tides, moon: t.moon, advisor: t.advisor, settings: t.settings,
   };
@@ -267,7 +287,7 @@ function App() {
       <div className="dashboard-grid">
         <section className="panel dark-panel outlook-panel">
           <header className="panel-header">
-            <div><h2 className="panel-title">{t.outlook}</h2><p className="panel-subtitle">{place[0]} · {selectedMethod}</p></div>
+            <div><h2 className="panel-title">{t.outlook}</h2><p className="panel-subtitle">{forecastPlace[0]} · {selectedMethod}</p></div>
             <span className="outlook-time">{fullTime(currentRow.time)}</span>
           </header>
           <div className="metric-grid">
@@ -299,7 +319,7 @@ function App() {
     if (!rows.length) return <div className="empty-state"><strong>{error ? t.unavailable : t.noRows}</strong>{error ? t.retryError : t.noRows}</div>;
     return <div className="section-stack">
       <section className="panel">
-        <header className="panel-header"><div><h2 className="panel-title">{t.daily}</h2><p className="panel-subtitle">{place[0]} · {selectedMethod}</p></div><CalendarDays size={18} color="#4d9279" /></header>
+        <header className="panel-header"><div><h2 className="panel-title">{t.daily}</h2><p className="panel-subtitle">{forecastPlace[0]} · {selectedMethod}</p></div><CalendarDays size={18} color="#4d9279" /></header>
         <div className="day-list">{days.map(day => {
           const dayRows = rows.filter(row => dayKey(row.time) === day);
           const eligible = dayRows.filter(row => score(row, method) !== null).sort((a, b) => score(b, method)! - score(a, method)!);
@@ -401,7 +421,7 @@ function App() {
 
   const content = () => {
     if (tab === 'settings') return renderSettings();
-    if (tab === 'map') return <MarineMap lang={lang} />;
+    if (tab === 'map') return <MarineMap lang={lang} areaName={forecastPlace[0]} areaPoint={{ lat: forecastPlace[1], lon: forecastPlace[2] }} onUsePointForForecast={applyCustomPoint} />;
     if (loading) return renderLoading();
     if (tab === 'dashboard') return renderDashboard();
     if (tab === 'forecast') return renderForecast();
@@ -430,7 +450,7 @@ function App() {
         </div>
       </header>
       <main className="content">
-        {tab !== 'map' && <div className="page-heading"><div><div className="eyebrow">Maldives · MVT +05:00</div><h1>{tab === 'dashboard' ? t.headline : pageTitle[tab]}</h1><p>{subtitle[tab]}</p></div>{!loading && !error && rows.length > 0 && <span className="live-tag"><span className="live-dot" />{place[0]}</span>}</div>}
+        {tab !== 'map' && <div className="page-heading"><div><div className="eyebrow">Maldives · MVT +05:00</div><h1>{tab === 'dashboard' ? t.headline : pageTitle[tab]}</h1><p>{subtitle[tab]}</p></div>{!loading && !error && rows.length > 0 && <span className="live-tag"><span className="live-dot" />{forecastPlace[0]}</span>}</div>}
         {tab !== 'map' && <section className="control-panel" aria-label="Forecast controls">
           <div className="field"><label htmlFor="area-select">{t.area}</label><select id="area-select" value={placeIndex} onChange={event => setPlaceIndex(Number(event.target.value))} data-testid="select-area">{places.map((p, index) => <option value={index} key={p[0]}>{p[0]}</option>)}</select></div>
           <div className="field"><label htmlFor="method-select">{t.method}</label><select id="method-select" value={method} onChange={event => setMethod(event.target.value)} data-testid="select-method">{methods.map(([id, name]) => <option value={id} key={id}>{name}</option>)}</select></div>

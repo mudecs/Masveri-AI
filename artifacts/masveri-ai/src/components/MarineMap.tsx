@@ -3,14 +3,20 @@ import * as maplibregl from 'maplibre-gl';
 import type { Map as MapLibreMap, Marker } from 'maplibre-gl';
 import maplibreWorkerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url';
 import 'maplibre-gl/dist/maplibre-gl.css';
-import { Crosshair, Layers3, MapPin, Navigation, Plus, Trash2 } from 'lucide-react';
+import { Crosshair, Layers3, MapPin, Navigation, Plus, Target, Trash2 } from 'lucide-react';
 import './marine-map.css';
 
 type Lang = 'en' | 'dv';
 type Coordinate = { lat: number; lon: number };
 type Spot = Coordinate & { id: string; name: string; createdAt: string };
 type GpsFix = Coordinate & { accuracy: number; speed: number | null; heading: number | null };
-type MarineMapProps = { lang: Lang };
+type MarineMapProps = {
+  lang: Lang;
+  areaName: string;
+  areaPoint: Coordinate;
+  onUsePointForForecast: (point: Coordinate) => void;
+  forecast: { wind: number | null; windDir: number | null; current: number | null; currentDir: number | null; updatedAt: string } | null;
+};
 
 const STORAGE_KEY = 'masveri-marine-spots-v1';
 maplibregl.setWorkerUrl(maplibreWorkerUrl);
@@ -76,6 +82,21 @@ const text = {
     waypoint: 'Saved fishing spot',
     locationSource: 'Location source',
     mapControls: 'Map controls',
+    fishingArea: 'Fishing area',
+    areaOnMap: 'Shown on map · used by forecasts',
+    centerArea: 'Center on fishing area',
+    usePoint: 'Use selected point for forecasts',
+    pointUsed: 'Forecasts now use the selected point',
+    areaMarker: 'Selected fishing area',
+    dataUnavailable: 'Data unavailable',
+    depthNeedsSource: 'Depth zones and contours need a bathymetry data provider (for example a GEBCO or hydrographic office chart source). None is configured yet, so no depths are shown.',
+    overlaySource: 'Source',
+    overlayUpdated: 'Forecast hour',
+    overlayAtArea: 'At the forecast point',
+    overlayNoData: 'No forecast data loaded yet. Load forecasts on the Home tab first.',
+    offline: 'Offline',
+    online: 'Online',
+    offlineNote: 'Offline: the app shell opens from cache, but new map tiles and forecasts need internet.',
   },
   dv: {
     title: 'މެރިން މެޕް',
@@ -132,6 +153,21 @@ const text = {
     waypoint: 'ސޭވްކުރި މަސްބާނާ ތަން',
     locationSource: 'މަގާމުގެ ސަރޗަޝްމަ',
     mapControls: 'މެޕް ކޮންޓްރޯލްތައް',
+    fishingArea: 'މަސްބާނާ ސަރަހައްދު',
+    areaOnMap: 'މެޕްގައި ދައްކާ · ފޯކާސްޓް ބޭނުންކުރޭ',
+    centerArea: 'މަސްބާނާ ސަރަހައްދަށް ދިމާކުރޭ',
+    usePoint: 'ނިޝާންކުރި ތަން ފޯކާސްޓްގައި ބޭނުންކުރޭ',
+    pointUsed: 'ފޯކާސްޓް މި ތަނުގެ ޑޭޓާ ބޭނުންކުރަނީ',
+    areaMarker: 'އިޚްތިޔާރުކުރި މަސްބާނާ ސަރަހައްދު',
+    dataUnavailable: 'ޑޭޓާ ނުލިބުނު',
+    depthNeedsSource: 'ފުންމިން ޒޯންތަކަށް ފުންމިން ދޭ ސަރަހައްދެއް ބޭނުންވާނީ (މިސާލަކަށް GEBCO ނުވަތަ ހައިޑްރޮގްރަފިކް އޮފީހެއްގެ ޗާޓް). އަދި އެއާ ހަމަޖައްސާފައި ނެތުމުޅައި ފުންމިން ނުދައްކާ.',
+    overlaySource: 'ސަރޗަޝްމަ',
+    overlayUpdated: 'ފޯކާސްޓް ގަޑިއިރު',
+    overlayAtArea: 'ފޯކާސްޓް ތަނުގައި',
+    overlayNoData: 'ފޯކާސްޓް ޑޭޓާ އަދި ލޯޑްވެފައި ނެތް. ފުރަތަމަ ފުރަތަމަ ޓެބް ފޯކާސްޓް ލޯޑްކުރޭ.',
+    offline: 'އޮފްލައިން',
+    online: 'އޮންލައިން',
+    offlineNote: 'އޮފްލައިން: އެޕް ކެޗްގައި ހުންނާނެ، ނަމަވެސް އާ މެޕް ޓައިލްތަކާއި ފޯކާސްޓްއަށް އިންޓަރނެޓް ބޭނުންވޭ.',
   },
 } as const;
 
@@ -174,7 +210,7 @@ function makeMarkerElement(className: string, label: string, title?: string) {
   return el;
 }
 
-export function MarineMap({ lang }: MarineMapProps) {
+export function MarineMap({ lang, areaName, areaPoint, onUsePointForForecast, forecast }: MarineMapProps) {
   const t = text[lang];
   const isDv = lang === 'dv';
   const mapContainer = useRef<HTMLDivElement>(null);
@@ -197,6 +233,24 @@ export function MarineMap({ lang }: MarineMapProps) {
   const [saveSource, setSaveSource] = useState<'selected' | 'gps'>('selected');
   const [formError, setFormError] = useState('');
   const [savedNotice, setSavedNotice] = useState(false);
+  const [pointUsedNotice, setPointUsedNotice] = useState(false);
+  const [showWind, setShowWind] = useState(false);
+  const [showCurrent, setShowCurrent] = useState(false);
+  const [showDepthNote, setShowDepthNote] = useState(false);
+  const [online, setOnline] = useState(() => (typeof navigator === 'undefined' ? true : navigator.onLine));
+  const areaMarkerRef = useRef<Marker | null>(null);
+  const overlayMarkerRef = useRef<Marker | null>(null);
+
+  useEffect(() => {
+    const goOnline = () => setOnline(true);
+    const goOffline = () => setOnline(false);
+    window.addEventListener('online', goOnline);
+    window.addEventListener('offline', goOffline);
+    return () => {
+      window.removeEventListener('online', goOnline);
+      window.removeEventListener('offline', goOffline);
+    };
+  }, []);
 
   useEffect(() => {
     const loaded = readSavedSpots();
@@ -261,6 +315,8 @@ export function MarineMap({ lang }: MarineMapProps) {
       selectionMarker.current = null;
       gpsMarker.current?.remove();
       gpsMarker.current = null;
+      areaMarkerRef.current?.remove();
+      areaMarkerRef.current = null;
       spotMarkers.current.forEach(marker => marker.remove());
       spotMarkers.current = [];
       map.off('load', onLoad);
@@ -282,6 +338,16 @@ export function MarineMap({ lang }: MarineMapProps) {
         .setLngLat([selectedPoint.lon, selectedPoint.lat]).addTo(map);
     }
   }, [selectedPoint, mapReady, t.selectedMarker]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapReady) return;
+    areaMarkerRef.current?.remove();
+    areaMarkerRef.current = null;
+    const marker = makeMarkerElement('marine-map__pin marine-map__pin--area', t.areaMarker, areaName);
+    areaMarkerRef.current = new maplibregl.Marker({ element: marker, anchor: 'bottom' })
+      .setLngLat([areaPoint.lon, areaPoint.lat]).addTo(map);
+  }, [areaPoint, mapReady, t.areaMarker, areaName]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -437,9 +503,27 @@ export function MarineMap({ lang }: MarineMapProps) {
               {formatCoordinate(selectedPoint.lat)}, {formatCoordinate(selectedPoint.lon)}
             </span>}
           </div>
+          {selectedPoint && <button className="marine-map__use-point" type="button"
+            onClick={() => { onUsePointForForecast(selectedPoint); setPointUsedNotice(true); }}
+            data-testid="button-use-point">
+            <Target size={14} aria-hidden="true" /> {t.usePoint}
+          </button>}
+          {pointUsedNotice && <p className="marine-map__form-success" role="status" data-testid="status-point-used">{t.pointUsed}</p>}
         </div>
 
         <aside className="marine-map__rail" aria-label={t.title}>
+          <section className="marine-map__card marine-map__area-card" aria-label={t.fishingArea}>
+            <div className="marine-map__card-heading">
+              <span className="marine-map__icon"><MapPin size={16} aria-hidden="true" /></span>
+              <div><h2>{t.fishingArea}</h2><p>{areaName}</p></div>
+            </div>
+            <p className="marine-map__area-note">{t.areaOnMap}</p>
+            <button className="marine-map__center-area" type="button" data-testid="button-center-area"
+              onClick={() => mapRef.current?.flyTo({ center: [areaPoint.lon, areaPoint.lat], zoom: Math.max(mapRef.current.getZoom(), 11), duration: 800 })}>
+              <Crosshair size={14} aria-hidden="true" /> {t.centerArea}
+            </button>
+          </section>
+
           <section className="marine-map__card marine-map__gps" aria-label={t.locate}>
             <div className="marine-map__card-heading">
               <span className="marine-map__icon"><Crosshair size={16} aria-hidden="true" /></span>
@@ -458,12 +542,23 @@ export function MarineMap({ lang }: MarineMapProps) {
             <div className="marine-map__section-heading"><Layers3 size={16} aria-hidden="true" /><h2>{t.layers}</h2></div>
             <div className="marine-map__layer-list">
               <div className="marine-map__layer marine-map__layer--active"><span className="marine-map__layer-dot" /><span>{t.basemap}</span><span className="marine-map__active-tag">{isDv ? 'އެކްޓިވް' : 'Active'}</span></div>
-              {[t.depthZones, t.depthContours, t.wind, t.currents].map((label, index) => (
-                <div className="marine-map__layer marine-map__layer--disabled" key={label} aria-disabled="true" data-testid={`layer-coming-soon-${index}`}>
-                  <span className="marine-map__layer-dot" /><span>{label}</span><span className="marine-map__soon">{t.comingSoon}</span>
-                </div>
+              <label className={`marine-map__layer marine-map__layer--toggle${forecast ? '' : ' marine-map__layer--disabled'}`}>
+                <input type="checkbox" checked={showWind} disabled={!forecast} onChange={event => setShowWind(event.target.checked)} data-testid="toggle-layer-wind" />
+                <span>{t.wind}</span><span className="marine-map__active-tag">{forecast ? (isDv ? 'ލިބިއްޖެ' : 'Live') : t.dataUnavailable}</span>
+              </label>
+              <label className={`marine-map__layer marine-map__layer--toggle${forecast ? '' : ' marine-map__layer--disabled'}`}>
+                <input type="checkbox" checked={showCurrent} disabled={!forecast} onChange={event => setShowCurrent(event.target.checked)} data-testid="toggle-layer-current" />
+                <span>{t.currents}</span><span className="marine-map__active-tag">{forecast ? (isDv ? 'ލިބިްޖެ' : 'Live') : t.dataUnavailable}</span>
+              </label>
+              {[t.depthZones, t.depthContours].map((label, index) => (
+                <button type="button" className="marine-map__layer marine-map__layer--disabled" key={label} onClick={() => setShowDepthNote(true)} aria-disabled="true" data-testid={`layer-coming-soon-${index}`}>
+                  <span className="marine-map__layer-dot" /><span>{label}</span><span className="marine-map__soon">{t.dataUnavailable}</span>
+                </button>
               ))}
             </div>
+            {showDepthNote && <p className="marine-map__depth-note" role="note" data-testid="note-depth-unavailable">
+              <strong>{t.dataUnavailable}.</strong> {t.depthNeedsSource}
+            </p>}
           </section>
 
           <section className="marine-map__card marine-map__save-card">
